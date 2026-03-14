@@ -61,7 +61,6 @@ class ScanRequest(BaseModel):
     file_types: Optional[List[str]] = ['pdf', 'doc', 'docx']
     domain: Optional[str] = 'gov.in'
     max_results: Optional[int] = 10
-    send_email: Optional[bool] = True
 
 
 class GovernmentImersonationScanRequest(BaseModel):
@@ -160,8 +159,7 @@ async def start_sensitive_data_scan(
             request.data_types,
             request.file_types,
             request.domain,
-            request.max_results,
-            request.send_email
+            request.max_results
         )
         
         logger.info(f"✅ Scan {scan.scan_id} started")
@@ -283,13 +281,104 @@ async def delete_detections(request: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/report/send")
+async def send_cert_in_report(request: dict, db: Session = Depends(get_db)):
+    """Send email report to CERT-In for user-selected scan results"""
+    try:
+        scan_id = request.get('scan_id')
+        leak_ids = request.get('leak_ids', [])
+        module = request.get('module', 'sensitive_data')
+
+        if not scan_id or not leak_ids:
+            raise HTTPException(status_code=400, detail="scan_id and leak_ids are required")
+
+        detections = db.query(DetectedLeak).filter(
+            DetectedLeak.scan_id == scan_id,
+            DetectedLeak.leak_id.in_(leak_ids)
+        ).all()
+
+        if not detections:
+            raise HTTPException(status_code=404, detail="No detections found for the selected IDs")
+
+        success = False
+
+        if module == 'sensitive_data':
+            detection_list = []
+            for d in detections:
+                try:
+                    evidence_data = json.loads(d.evidence) if d.evidence else {}
+                    detection_list.append({
+                        'data_type': d.data_type,
+                        'file_url': d.file_url,
+                        'confidence': d.confidence or 0,
+                        'evidence': evidence_data.get('context', d.evidence or '')
+                    })
+                except Exception:
+                    detection_list.append({
+                        'data_type': d.data_type,
+                        'file_url': d.file_url,
+                        'confidence': d.confidence or 0,
+                        'evidence': d.evidence or ''
+                    })
+            unique_urls = len(set(d['file_url'] for d in detection_list))
+            scan_results = {
+                'scan_id': scan_id,
+                'duration': 'N/A',
+                'total_queries': 0,
+                'files_processed': unique_urls,
+                'urls_with_detections': unique_urls
+            }
+            success = email_reporter.send_sensitive_data_report(scan_results, detection_list)
+
+        elif module == 'government_impersonation':
+            findings = []
+            for d in detections:
+                try:
+                    evidence = json.loads(d.evidence) if d.evidence else {}
+                    findings.append({
+                        'impersonation_type': d.data_type,
+                        'url': d.file_url,
+                        'domain': evidence.get('domain', ''),
+                        'confidence': d.confidence or 0,
+                        'risk_level': evidence.get('risk_level', 'MEDIUM'),
+                        'title': evidence.get('title', ''),
+                        'indicators': evidence.get('indicators', []),
+                        'threat_details': evidence.get('threat_details', '')
+                    })
+                except Exception:
+                    pass
+            success = email_reporter.send_government_impersonation_report(scan_id, findings)
+
+        # Log email report
+        email_report = EmailReport(
+            scan_id=scan_id,
+            recipient=settings.cert_in_email,
+            subject=f"[URGENT] {'Sensitive Data Exposure' if module == 'sensitive_data' else 'Government Impersonation'} Report - Scan {scan_id}",
+            body=f"Manual report for {len(leak_ids)} selected item(s)",
+            status="sent" if success else "failed",
+            sent_time=datetime.utcnow() if success else None
+        )
+        db.add(email_report)
+        db.commit()
+
+        if success:
+            return {"status": "success", "message": f"Report sent to {settings.cert_in_email}"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send email. Check SMTP configuration in .env")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Report send failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def execute_sensitive_data_scan(
     scan_id: int,
     data_types: List[str],
     file_types: List[str],
     domain: str,
-    max_results: int,
-    send_email: bool
+    max_results: int
 ):
     """
     Execute the sensitive data scan (background task)
@@ -435,31 +524,6 @@ def execute_sensitive_data_scan(
         db.commit()
         
         logger.info(f"✅ Scan {scan_id} completed. Found detections in {len(url_detections)} unique URLs.")
-        
-        # Send email report if requested
-        if send_email and url_detections:
-            duration = (scan.end_time - scan.start_time).total_seconds()
-            scan_results = {
-                "scan_id": scan_id,
-                "duration": f"{duration:.1f} seconds",
-                "total_queries": len(queries),
-                "files_processed": len(processed_urls),
-                "urls_with_detections": len(url_detections)
-            }
-            
-            success = email_reporter.send_sensitive_data_report(scan_results, all_detections)
-            
-            # Log email report
-            email_report = EmailReport(
-                scan_id=scan_id,
-                recipient=settings.cert_in_email,
-                subject=f"[URGENT] Sensitive Data Exposure Detected - Scan {scan_id}",
-                body="Automated report sent",
-                status="sent" if success else "failed",
-                sent_time=datetime.utcnow() if success else None
-            )
-            db.add(email_report)
-            db.commit()
         
     except Exception as e:
         logger.error(f"❌ Scan {scan_id} failed: {str(e)}")

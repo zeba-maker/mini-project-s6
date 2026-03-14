@@ -68,9 +68,7 @@ async function startScan() {
 
         const domain = document.getElementById('domain').value;
         const maxResults = parseInt(document.getElementById('maxResults').value);
-        const sendEmail = document.getElementById('sendEmail').checked;
-
-        const requestData = { data_types: dataTypes, file_types: fileTypes, domain, max_results: maxResults, send_email: sendEmail };
+        const requestData = { data_types: dataTypes, file_types: fileTypes, domain, max_results: maxResults };
 
         document.getElementById('progressPanel').style.display = 'block';
         document.getElementById('resultsPanel').style.display = 'none';
@@ -134,6 +132,9 @@ function pollScanStatus(scanId) {
 function displayResults(data) {
     document.getElementById('progressPanel').style.display = 'none';
     document.getElementById('resultsPanel').style.display = 'block';
+    window.currentM1ScanId = data.scan_id;
+    const selAll = document.getElementById('selectAllM1');
+    if (selAll) selAll.checked = false;
 
     const detections = data.detections || [];
     const summary = document.getElementById('resultsSummary');
@@ -164,8 +165,7 @@ function displayResults(data) {
             try { evidence = typeof first.evidence === 'string' ? (JSON.parse(first.evidence).context || first.evidence) : (first.evidence || ''); } catch { evidence = first.evidence || ''; }
             const leakIds = urlDetections.map(d => d.leak_id).join(',');
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><strong>${dataTypes.join(', ').replace(/_/g,' ').toUpperCase()}</strong></td>
+            row.innerHTML = `                <td><input type="checkbox" class="m1-result-check" data-leak-ids="${leakIds}"></td>                <td><strong>${dataTypes.join(', ').replace(/_/g,' ').toUpperCase()}</strong></td>
                 <td><a href="${urlItem.file_url}" target="_blank">${urlItem.file_url.substring(0,55)}…</a></td>
                 <td class="${confClass}">${maxConf.toFixed(1)}%</td>
                 <td>${evidence.substring(0,80)}…</td>
@@ -197,7 +197,37 @@ function resetScan() {
     document.getElementById('progressPanel').style.display = 'none';
     document.getElementById('resultsPanel').style.display = 'none';
     document.getElementById('progressFill').style.width = '0%';
+    window.currentM1ScanId = null;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function toggleSelectAllM1(checkbox) {
+    document.querySelectorAll('.m1-result-check').forEach(cb => cb.checked = checkbox.checked);
+}
+
+async function sendM1Report() {
+    const scanId = window.currentM1ScanId;
+    if (!scanId) { alert('No scan loaded.'); return; }
+    const selected = Array.from(document.querySelectorAll('.m1-result-check:checked'));
+    if (!selected.length) { alert('Please select at least one result to include in the report.'); return; }
+    const leakIds = selected.flatMap(cb => cb.getAttribute('data-leak-ids').split(',').map(Number));
+    if (!confirm(`Send report for ${selected.length} selected result(s) to CERT-In?`)) return;
+    const btn = document.getElementById('sendM1ReportBtn');
+    btn.disabled = true; btn.textContent = 'Sending\u2026';
+    try {
+        const res = await fetch('/api/report/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scan_id: scanId, leak_ids: leakIds, module: 'sensitive_data' })
+        });
+        const data = await res.json();
+        if (res.ok) { alert('\u2705 Report sent to CERT-In successfully!'); }
+        else { alert('\u274c Failed to send report: ' + (data.detail || 'Unknown error')); }
+    } catch (e) { alert('\u274c Error: ' + e.message); }
+    finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send Report to CERT-In';
+    }
 }
 
 /* ---------- Recent Scans ---------- */
@@ -329,6 +359,9 @@ function pollGIDSScanStatus(scanId) {
 function displayGIDSResults(data) {
     document.getElementById('gids-progressPanel').style.display = 'none';
     document.getElementById('gids-resultsPanel').style.display = 'block';
+    window.currentM2ScanId = data.scan_id;
+    const selAll2 = document.getElementById('selectAllM2');
+    if (selAll2) selAll2.checked = false;
 
     const findings = data.findings || [];
     const rb = data.risk_breakdown || { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
@@ -354,7 +387,7 @@ function displayGIDSResultsTable(results) {
     const tbody = document.getElementById('gids-resultsTableBody');
     tbody.innerHTML = '';
     if (!results.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No government impersonation threats detected.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No government impersonation threats detected.</td></tr>';
         return;
     }
     const riskMap = { CRITICAL: 'var(--red)', HIGH: 'var(--orange)', MEDIUM: 'var(--yellow)', LOW: 'var(--green)' };
@@ -362,6 +395,7 @@ function displayGIDSResultsTable(results) {
         const row = document.createElement('tr');
         row.setAttribute('data-risk', r.risk_level);
         row.innerHTML = `
+            <td><input type="checkbox" class="m2-result-check" data-leak-id="${r.leak_id}"></td>
             <td><strong>${r.impersonation_type}</strong></td>
             <td><a href="${r.url}" target="_blank">${r.domain}</a></td>
             <td style="color:${riskMap[r.risk_level] || 'var(--text-secondary)'};font-weight:700">${r.risk_level}</td>
@@ -398,7 +432,37 @@ function resetGIDSScan() {
     document.getElementById('gids-resultsPanel').style.display = 'none';
     document.getElementById('gids-progressFill').style.width = '0%';
     window.allGIDSResults = [];
+    window.currentM2ScanId = null;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function toggleSelectAllM2(checkbox) {
+    document.querySelectorAll('.m2-result-check').forEach(cb => cb.checked = checkbox.checked);
+}
+
+async function sendGIDSReport() {
+    const scanId = window.currentM2ScanId;
+    if (!scanId) { alert('No scan loaded.'); return; }
+    const selected = Array.from(document.querySelectorAll('.m2-result-check:checked'));
+    if (!selected.length) { alert('Please select at least one result to include in the report.'); return; }
+    const leakIds = selected.map(cb => parseInt(cb.getAttribute('data-leak-id'))).filter(id => !isNaN(id));
+    if (!confirm(`Send report for ${selected.length} selected result(s) to CERT-In?`)) return;
+    const btn = document.getElementById('sendGIDSReportBtn');
+    btn.disabled = true; btn.textContent = 'Sending\u2026';
+    try {
+        const res = await fetch('/api/report/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scan_id: scanId, leak_ids: leakIds, module: 'government_impersonation' })
+        });
+        const data = await res.json();
+        if (res.ok) { alert('\u2705 Report sent to CERT-In successfully!'); }
+        else { alert('\u274c Failed to send report: ' + (data.detail || 'Unknown error')); }
+    } catch (e) { alert('\u274c Error: ' + e.message); }
+    finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send Report to CERT-In';
+    }
 }
 
 /* ===================== INIT ===================== */

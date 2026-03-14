@@ -175,6 +175,110 @@ class EmailReporter:
         
         return html
     
+    def send_government_impersonation_report(self, scan_id: int, findings: List[Dict]) -> bool:
+        """Send government impersonation detection report to CERT-In"""
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.sender_email
+            msg['To'] = self.cert_in_email
+            msg['Subject'] = f"[URGENT] Government Impersonation Sites Detected - Scan {scan_id} - {datetime.now().strftime('%Y-%m-%d')}"
+            body = self._create_gids_email_body(scan_id, findings)
+            msg.attach(MIMEText(body, 'html'))
+            logger.info(f"📧 Sending GIDS report to {self.cert_in_email}...")
+            self._send_email(msg)
+            logger.info("✅ GIDS email sent successfully!")
+            return True
+        except Exception as e:
+            logger.error(f"❌ GIDS email sending failed: {str(e)}")
+            return False
+
+    def _create_gids_email_body(self, scan_id: int, findings: List[Dict]) -> str:
+        """Create HTML email body for government impersonation report"""
+        risk_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
+        for f in findings:
+            rl = f.get('risk_level', 'MEDIUM')
+            risk_counts[rl] = risk_counts.get(rl, 0) + 1
+
+        html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .header {{ background-color: #1a237e; color: white; padding: 20px; }}
+                .content {{ padding: 20px; }}
+                .alert {{ background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }}
+                .stats {{ background-color: #f5f5f5; padding: 15px; margin: 20px 0; }}
+                table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+                th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+                th {{ background-color: #f5f5f5; font-weight: bold; }}
+                .critical {{ color: #d32f2f; font-weight: bold; }}
+                .high {{ color: #e65100; font-weight: bold; }}
+                .medium {{ color: #f57f17; }}
+                .footer {{ background-color: #f5f5f5; padding: 20px; margin-top: 30px; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>🚨 URGENT: Government Impersonation Sites Detected</h1>
+                <p>Automated Security Scan Report — Scan #{scan_id} — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </div>
+            <div class="content">
+                <div class="alert">
+                    <strong>⚠️ CRITICAL SECURITY INCIDENT</strong><br>
+                    Our automated scanning system has detected websites impersonating Indian government services.
+                    These sites may be phishing portals targeting Indian citizens' personal data.
+                </div>
+                <div class="stats">
+                    <h2>📊 Risk Summary</h2>
+                    <ul>
+                        <li><strong>Total Threats Reported:</strong> {len(findings)}</li>
+                        <li><strong>Critical:</strong> {risk_counts['CRITICAL']}</li>
+                        <li><strong>High:</strong> {risk_counts['HIGH']}</li>
+                        <li><strong>Medium:</strong> {risk_counts['MEDIUM']}</li>
+                        <li><strong>Low:</strong> {risk_counts['LOW']}</li>
+                    </ul>
+                </div>
+                <h2>🔍 Detected Impersonation Sites</h2>
+                <table>
+                    <tr>
+                        <th>Service Impersonated</th>
+                        <th>Domain</th>
+                        <th>Risk Level</th>
+                        <th>Confidence</th>
+                        <th>Threat Details</th>
+                    </tr>
+        """
+        for finding in findings:
+            risk = finding.get('risk_level', 'MEDIUM')
+            risk_class = risk.lower() if risk in ('CRITICAL', 'HIGH', 'MEDIUM') else ''
+            conf = finding.get('confidence', 0)
+            html += f"""
+                    <tr>
+                        <td>{finding.get('impersonation_type', '').replace('_', ' ').title()}</td>
+                        <td><a href="{finding.get('url', '')}">{finding.get('domain', '')}</a></td>
+                        <td class="{risk_class}">{risk}</td>
+                        <td>{conf:.1f}%</td>
+                        <td>{(finding.get('threat_details', '') or '')[:150]}</td>
+                    </tr>
+            """
+        html += """
+                </table>
+                <h2>✅ Recommended Actions</h2>
+                <ol>
+                    <li><strong>Immediate:</strong> Report these domains to ISPs and registrars for takedown</li>
+                    <li><strong>Short-term:</strong> Issue a public advisory warning citizens about phishing sites</li>
+                    <li><strong>Long-term:</strong> Implement DMARC/DNSBL policies to block impersonating domains</li>
+                </ol>
+            </div>
+            <div class="footer">
+                <p><strong>Report Generated By:</strong> Automated Sensitive Data &amp; Spoofing Detection Framework</p>
+                <p><em>This is a manually triggered report. For questions, contact the system administrator.</em></p>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+
     def _send_email(self, msg: MIMEMultipart):
         """Send email via SMTP"""
         with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
