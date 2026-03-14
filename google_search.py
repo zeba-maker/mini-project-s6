@@ -128,37 +128,43 @@ class GoogleSearchAPI:
         """
         queries = []
         
-        # Mapping of data types to specific dork queries
-        dork_queries = {
+        # File types to search for
+        file_types = ["pdf", "docx", "doc"]
+        
+        # Base dork queries for each data type (without ext: prefix)
+        base_dorks = {
             "aadhaar": [
-                f'site:gov.in ext:pdf "Aadhaar" -inurl:gazette'
+                f'site:gov.in "Aadhaar" -inurl:gazette'
                 ],
             
             "pan": [
-                f'site:{domain} ext:pdf "Pan Card"',
-                f'site:{domain} ext:pdf "Permanent Account Number"'
+                f'site:{domain} "Pan Card"',
+                f'site:{domain} "Permanent Account Number"'
             ],
             "bank_account": [
-                f'site:{domain} ext:pdf "Account Number" "IFSC"',
-                f'site:{domain} ext:pdf "Bank Account"'
+                f'site:{domain} "Account Number" "IFSC"',
+                f'site:{domain} "Bank Account"'
             ],
             "voter_id": [
-                f'site:{domain} ext:pdf "Voter ID"',
-                f'site:{domain} ext:pdf "EPIC Number"'
+                f'site:{domain} "Voter ID"',
+                f'site:{domain} "EPIC Number"'
             ],
             "passport": [
-                f'site:{domain} ext:pdf "Passport Number"'
+                f'site:{domain} "Passport Number"'
             ]
         }
         
         for data_type in data_types:
-            if data_type in dork_queries:
-                for dork in dork_queries[data_type]:
-                    queries.append({
-                        "query": dork,
-                        "data_type": data_type,
-                        "file_type": "pdf"
-                    })
+            if data_type in base_dorks:
+                for base_dork in base_dorks[data_type]:
+                    # Generate dorks for each file type
+                    for file_type in file_types:
+                        dork_with_ext = f'{base_dork} ext:{file_type}'
+                        queries.append({
+                            "query": dork_with_ext,
+                            "data_type": data_type,
+                            "file_type": file_type
+                        })
         
         logger.info(f"📋 Generated {len(queries)} dorking queries")
         return queries

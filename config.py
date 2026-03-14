@@ -40,7 +40,7 @@ class Settings:
         }
         
         # File Type Extensions
-        self.supported_file_types: List[str] = ["pdf", "doc", "docx", "html", "log", "txt"]
+        self.supported_file_types: List[str] = ["pdf", "doc", "docx", "log", "txt"]
         
         # Search Configuration
         self.max_results_per_query: int = 10
